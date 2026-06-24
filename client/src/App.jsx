@@ -27,8 +27,9 @@ const App = () => {
   const [history, setHistory] = useState([]);
   const [unit, setUnit] = useState('metric'); // 'metric' (°C, km/h) or 'imperial' (°F, mph)
   const theme = 'dark';
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [locationRequested, setLocationRequested] = useState(false);
 
   const [thresholds, setThresholds] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(Date.now());
@@ -100,6 +101,7 @@ const App = () => {
   const handleGeolocation = () => {
     setIsLoading(true);
     setError(null);
+    setLocationRequested(true);
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -109,19 +111,16 @@ const App = () => {
           loadWeatherData(coordsQuery);
         },
         (geoError) => {
-          console.warn('Geolocation failed/denied, falling back to default:', geoError.message);
-          // Fallback to London if geolocation fails
-          const fallbackCity = 'London';
-          setCityQuery(fallbackCity);
-          loadWeatherData(fallbackCity);
+          console.warn('Geolocation failed/denied:', geoError.message);
+          setIsLoading(false);
+          setError('Location access was denied or timed out. Please search for your city using the search bar above.');
         },
-        { timeout: 8000 }
+        { timeout: 10000 }
       );
     } else {
       // Browser doesn't support Geolocation
-      const fallbackCity = 'London';
-      setCityQuery(fallbackCity);
-      loadWeatherData(fallbackCity);
+      setIsLoading(false);
+      setError('Your browser does not support geolocation. Please search for your city using the search bar above.');
     }
   };
 
@@ -129,6 +128,7 @@ const App = () => {
   useEffect(() => {
     loadFavoritesAndHistory();
     handleGeolocation();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Trigger auto-refresh loop for the ACTIVE city weather only (every 5 mins)
@@ -340,6 +340,29 @@ const App = () => {
                   <SkeletonLoader type="hourly" />
                   <SkeletonLoader type="daily" />
                 </div>
+              ) : !weather && !error ? (
+                <motion.div
+                  key="welcome-card"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="glass-card rounded-3xl p-12 text-center max-w-xl mx-auto my-12"
+                >
+                  <div className="w-20 h-20 mx-auto mb-6 bg-sky-500/20 border border-sky-400/30 rounded-3xl flex items-center justify-center">
+                    <CloudSun className="w-10 h-10 text-sky-400" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-100 mb-3">Welcome to AeroCast</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed mb-6">
+                    Allow location access to see live weather for your area, or search for any city using the bar above.
+                  </p>
+                  <button
+                    onClick={handleGeolocation}
+                    className="px-6 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded-2xl shadow-lg shadow-sky-500/20 hover:shadow-sky-500/35 transition-all select-none cursor-pointer flex items-center gap-2 mx-auto"
+                    type="button"
+                  >
+                    <Navigation className="w-4 h-4" /> Detect My Location
+                  </button>
+                </motion.div>
               ) : error ? (
                 <motion.div
                   key="error-card"
@@ -351,13 +374,24 @@ const App = () => {
                   <ShieldAlert className="w-16 h-16 text-rose-500 mx-auto animate-bounce" />
                   <h3 className="text-xl font-bold text-slate-100 mt-4">Weather Request Failed</h3>
                   <p className="text-sm text-slate-400 mt-2.5 leading-relaxed">{error}</p>
-                  <button
-                    onClick={() => loadWeatherData(cityQuery || 'London')}
-                    className="mt-6 px-6 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded-2xl shadow-lg shadow-sky-500/20 hover:shadow-sky-500/35 transition-all select-none cursor-pointer flex items-center gap-2 mx-auto"
-                    type="button"
-                  >
-                    <RefreshCw className="w-4 h-4" /> Try Again
-                  </button>
+                  <div className="mt-6 flex gap-3 justify-center flex-wrap">
+                    {cityQuery && (
+                      <button
+                        onClick={() => loadWeatherData(cityQuery)}
+                        className="px-6 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded-2xl shadow-lg shadow-sky-500/20 hover:shadow-sky-500/35 transition-all select-none cursor-pointer flex items-center gap-2"
+                        type="button"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Try Again
+                      </button>
+                    )}
+                    <button
+                      onClick={handleGeolocation}
+                      className="px-6 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-2xl shadow-lg transition-all select-none cursor-pointer flex items-center gap-2"
+                      type="button"
+                    >
+                      <Navigation className="w-4 h-4" /> Retry Location
+                    </button>
+                  </div>
                 </motion.div>
               ) : (
                 <motion.div
