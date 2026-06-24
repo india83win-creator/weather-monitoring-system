@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Columns, X, Search, MapPin, ArrowLeftRight, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { weatherService } from '../services/api';
@@ -12,7 +13,9 @@ const CityCompare = ({ primaryWeather, unit }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState(null);
+  const [dropdownRect, setDropdownRect] = useState(null);
   const searchRef = useRef(null);
+  const inputRef = useRef(null);
 
   // Close suggestions on click outside
   useEffect(() => {
@@ -25,25 +28,42 @@ const CityCompare = ({ primaryWeather, unit }) => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // Debounced search for city 2
+  // Debounced search for city 2 with fuzzy fallback
   useEffect(() => {
-    if (searchQuery.trim().length < 3) {
+    if (searchQuery.trim().length < 2) {
       setSuggestions([]);
       return;
     }
     const timer = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const results = await weatherService.searchCities(searchQuery);
+        let results = await weatherService.searchCities(searchQuery);
+        // Fuzzy fallback: if no results, retry with one less character
+        if (results.length === 0 && searchQuery.trim().length > 2) {
+          results = await weatherService.searchCities(searchQuery.trim().slice(0, -1));
+        }
         setSuggestions(results);
       } catch (err) {
         console.error('Error searching target city:', err);
+        setSuggestions([]);
       } finally {
         setIsLoading(false);
       }
-    }, 300); // 300ms debounce
+    }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Update dropdown position when input is focused or query changes
+  const updateDropdownPosition = useCallback(() => {
+    if (inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect();
+      setDropdownRect({
+        top: rect.bottom + window.scrollY + 6,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    }
+  }, []);
 
   // Load target weather
   const handleSelectTarget = async (city) => {
@@ -136,11 +156,11 @@ const CityCompare = ({ primaryWeather, unit }) => {
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0, height: 0, overflow: 'hidden' }}
+            animate={{ opacity: 1, height: 'auto', overflow: 'visible' }}
+            exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
             transition={{ duration: 0.3 }}
-            className="overflow-hidden space-y-4 pt-2 border-t border-white/5"
+            className="space-y-4 pt-2 border-t border-white/5 overflow-visible"
           >
             {/* Target search field (shows if no target is loaded) */}
             {!targetWeather && (
@@ -148,13 +168,17 @@ const CityCompare = ({ primaryWeather, unit }) => {
                 <div className="relative">
                   <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
                   <input
+                    ref={inputRef}
                     type="text"
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
                       if (error) setError(null);
                     }}
-                    onFocus={() => setIsSearching(true)}
+                    onFocus={() => {
+                      setIsSearching(true);
+                      updateDropdownPosition();
+                    }}
                     placeholder="Compare with another city..."
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-950/60 text-white border border-slate-800 rounded-xl text-sm focus:border-sky-500 outline-none transition-all"
                   />
@@ -168,30 +192,43 @@ const CityCompare = ({ primaryWeather, unit }) => {
                   </div>
                 )}
 
-                {/* Suggestions List */}
-                {isSearching && (suggestions.length > 0 || isLoading) && (
-                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl overflow-hidden max-h-[160px] overflow-y-auto custom-scrollbar z-50">
-                    {isLoading && (
-                      <div className="px-4 py-2.5 text-xs text-slate-400 flex items-center gap-2">
-                        <div className="w-3 h-3 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
-                        Searching...
+                {/* Suggestions Dropdown — rendered via Portal to avoid overflow clipping */}
+                {isSearching && (suggestions.length > 0 || isLoading) && dropdownRect &&
+                  createPortal(
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: dropdownRect.top,
+                        left: dropdownRect.left,
+                        width: dropdownRect.width,
+                        zIndex: 99999,
+                      }}
+                    >
+                      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl" style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                        {isLoading && (
+                          <div className="px-4 py-2.5 text-xs text-slate-400 flex items-center gap-2">
+                            <div className="w-3 h-3 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+                            Searching...
+                          </div>
+                        )}
+                        {suggestions.map((city, idx) => (
+                          <button
+                            key={`${city.lat}-${city.lon}-${idx}`}
+                            onMouseDown={(e) => { e.preventDefault(); handleSelectTarget(city); }}
+                            className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-slate-800 text-left text-xs text-slate-200 transition-colors"
+                            type="button"
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                            <span className="font-bold">{city.name}</span>
+                            {city.state && <span className="text-slate-400">, {city.state}</span>}
+                            <span className="text-slate-400">, {city.country}</span>
+                          </button>
+                        ))}
                       </div>
-                    )}
-                    {suggestions.map((city, idx) => (
-                      <button
-                        key={`${city.lat}-${city.lon}-${idx}`}
-                        onClick={() => handleSelectTarget(city)}
-                        className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-slate-800 text-left text-xs text-slate-200 transition-colors"
-                        type="button"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                        <span className="font-bold">{city.name}</span>
-                        {city.state && <span className="text-slate-400">, {city.state}</span>}
-                        <span className="text-slate-400">, {city.country}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                    </div>,
+                    document.body
+                  )
+                }
               </form>
             )}
 

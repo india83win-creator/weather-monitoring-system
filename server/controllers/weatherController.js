@@ -43,7 +43,7 @@ export const searchCities = async (req, res) => {
   }
 
   try {
-    const geoUrl = `http://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(q)}&limit=5&appid=${apiKey}`;
+    const geoUrl = `http://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(q)}&limit=8&appid=${apiKey}`;
     const response = await axios.get(geoUrl);
     
     // Format response to remove unnecessary fields
