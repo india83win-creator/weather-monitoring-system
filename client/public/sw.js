@@ -1,86 +1,103 @@
-const CACHE_NAME = 'aerocast-cache-v2';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/favicon.svg',
-  '/manifest.json'
-];
+// AeroCast Service Worker — Network-First strategy
+// Bump this version on every deploy to force cache invalidation on mobile
+const CACHE_VERSION = 'aerocast-v4';
+const STATIC_ASSETS = ['/', '/index.html', '/favicon.svg', '/manifest.json'];
 
-// Install Event
+// ─── Install ──────────────────────────────────────────────────────────────────
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[Service Worker] Caching static shell assets');
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
+  // Take over immediately — don't wait for old SW to idle out
   self.skipWaiting();
-});
-
-// Activate Event
-self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            console.log('[Service Worker] Removing old cache:', key);
-            return caches.delete(key);
-          }
-        })
+    caches.open(CACHE_VERSION).then((cache) => {
+      console.log('[SW] Pre-caching static shell');
+      // Use individual try/catch so one missing asset doesn't break the whole install
+      return Promise.allSettled(
+        STATIC_ASSETS.map((url) =>
+          cache.add(url).catch((err) =>
+            console.warn(`[SW] Could not pre-cache ${url}:`, err.message)
+          )
+        )
       );
     })
   );
-  self.clients.claim();
 });
 
-// Fetch Event
-self.addEventListener('fetch', (e) => {
-  const requestUrl = new URL(e.request.url);
-
-  // Network-First with Cache Fallback for weather API routes
-  if (requestUrl.pathname.includes('/api/weather')) {
-    e.respondWith(
-      fetch(e.request)
-        .then((response) => {
-          if (response.status === 200) {
-            const cacheCopy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(e.request, cacheCopy);
-            });
+// ─── Activate ─────────────────────────────────────────────────────────────────
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_VERSION) {
+            console.log('[SW] Deleting stale cache:', key);
+            return caches.delete(key);
           }
-          return response;
+        })
+      )
+    ).then(() => {
+      // Take control of all open clients immediately
+      return self.clients.claim();
+    })
+  );
+});
+
+// ─── Fetch ────────────────────────────────────────────────────────────────────
+self.addEventListener('fetch', (e) => {
+  const { request } = e;
+  const url = new URL(request.url);
+
+  // Ignore non-GET, chrome-extension, and cross-origin requests (e.g. API calls)
+  if (
+    request.method !== 'GET' ||
+    url.protocol.startsWith('chrome-extension') ||
+    url.origin !== location.origin
+  ) {
+    return;
+  }
+
+  // API routes: pass straight through — no caching for live weather data
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // JS / CSS bundles & index.html: NETWORK-FIRST
+  // This ensures fresh code from Vercel is always loaded after a deploy.
+  // Falls back to cache only if network is completely unavailable.
+  if (
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css') ||
+    url.pathname === '/' ||
+    url.pathname === '/index.html'
+  ) {
+    e.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse.ok) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(request, clone));
+          }
+          return networkResponse;
         })
         .catch(() => {
-          console.log('[Service Worker] Offline - serving weather from cache');
-          return caches.match(e.request);
+          console.warn('[SW] Network failed for', url.pathname, '— serving from cache');
+          return caches.match(request);
         })
     );
     return;
   }
 
-  // Cache-First with Network Fallback for static assets and scripts
+  // Static assets (images, fonts, icons): CACHE-FIRST, network fallback
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(e.request).then((networkResponse) => {
-        // Only cache successful standard HTTP/HTTPS resources
-        if (
-          networkResponse.status === 200 &&
-          e.request.method === 'GET' &&
-          !requestUrl.protocol.startsWith('chrome-extension') &&
-          !requestUrl.pathname.includes('/src/main.jsx') // don't cache Vite main entry
-        ) {
-          const cacheCopy = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(e.request, cacheCopy);
-          });
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+      return fetch(request).then((networkResponse) => {
+        if (networkResponse.ok) {
+          const clone = networkResponse.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(request, clone));
         }
         return networkResponse;
       }).catch((err) => {
-        console.warn('[Service Worker] Fetch failed and asset not cached:', err.message);
+        console.warn('[SW] Asset not cached and network failed:', url.pathname, err.message);
       });
     })
   );
