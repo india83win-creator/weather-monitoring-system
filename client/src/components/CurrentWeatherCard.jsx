@@ -174,10 +174,7 @@ const CurrentWeatherCard = ({ weather, todayForecast, isFavorite, onToggleFavori
           <p className="text-xs md:text-sm text-slate-300 mt-1">
             Local time: {formatLocalTime(Math.floor(Date.now() / 1000), weather.timezone)}
           </p>
-          {/* Debug API update timestamp requested for cache troubleshooting */}
-          <p className="text-[10px] text-sky-400 font-bold tracking-wider mt-0.5 select-all">
-            API data time: {formatLocalTime(weather.dt, weather.timezone)} (dt: {weather.dt})
-          </p>
+
           {/* Real-time Monitoring Auto-Refresh Telemetry */}
           <p className="text-[10px] text-emerald-450 font-bold tracking-wider mt-0.5 select-none flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
